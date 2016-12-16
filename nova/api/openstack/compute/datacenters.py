@@ -7,15 +7,11 @@
 #
 # =================================================================
 
-import webob
-from webob import exc
-
-from nova.api.openstack import common
 from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova.i18n import _
-from nova import servicegroup
 from nova import exception
+from nova import servicegroup
 from nova import compute as compute
 from nova import vcmcompute as vcmcompute
 from oslo_log import log as logging
@@ -29,15 +25,20 @@ class DatacenterController(wsgi.Controller):
     def __init__(self):
         super(DatacenterController, self).__init__()
         self.host_api = compute.HostAPI()
+        self.servicegroup_api = servicegroup.API()
         self.vcmcompute_api = vcmcompute.API()
 
-    def get_vcenter_hosts(self, context):
+    def get_compute_nodes_of_vcenter(self, context):
+        ''' Get compute nodes which as backend of vcenter server '''
         compute_nodes = self.host_api.compute_node_get_all(context)
-        hosts=[]
+        nodes={}
         for hyp in compute_nodes:
             if hyp.hypervisor_type == 'VMware vCenter Server':
-                hosts.append(hyp.host)
-        return hosts
+                service = self.host_api.service_get_by_compute_host(context, hyp.host)
+                active = self.servicegroup_api.service_is_up(service)
+                if active:
+                    nodes[hyp.hypervisor_hostname] = hyp.host
+        return nodes.values()
 
 
     @extensions.expected_errors(())
@@ -45,12 +46,37 @@ class DatacenterController(wsgi.Controller):
         """ Get all node datacenter. """
         context = req.environ['nova.context']
         authorize(context)
-        hosts = self.get_vcenter_hosts(context)
+        nodes = self.get_compute_nodes_of_vcenter(context)
         all_node_dcs = {}
-        for host in hosts:
-            datacenter = self.vcmcompute_api.get_datacenters(context, host)
-            all_node_dcs[host] = datacenter
+        for node in nodes:
+            datacenter = self.vcmcompute_api.get_datacenters(context, node)
+            all_node_dcs[node] = datacenter
         return all_node_dcs
+
+
+    @extensions.expected_errors(())
+    def detail(self, req, id=None):
+        context = req.environ['nova.context']
+        authorize(context)
+        nodes = self.get_compute_nodes_of_vcenter(context)
+        all_node_res_infos = {}
+        for node in nodes:
+            if id is None:
+                res_infos = self.vcmcompute_api.get_datacenters(context, node, detail=True)
+            elif id == 'datastores':
+                res_infos = self.vcmcompute_api.get_datastores(context, node, detail=True)
+            elif id == 'datastore_clusters':
+                res_infos = self.vcmcompute_api.get_datastore_clusters(context, node, detail=True)
+            elif id == 'hosts':
+                res_infos = self.vcmcompute_api.get_esxi_hosts(context, node, detail=True)
+            else:
+                res_infos = {'help': {'datacenter': '/detail',
+                             'datastore': 'datastores/datail',
+                             'datastore_cluster': 'datastore_clusters/datail',
+                             'esxi': 'hosts/datail',
+                             }}
+            all_node_res_infos[node] = res_infos
+        return all_node_res_infos
 
 
     @extensions.expected_errors(())
@@ -58,12 +84,50 @@ class DatacenterController(wsgi.Controller):
         """ Get all node datastores. """
         context = req.environ['nova.context']
         authorize(context)
-        hosts = self.get_vcenter_hosts(context)
-        all_node_dss={} 
-        for host in hosts:
-            datastores = self.vcmcompute_api.get_datastores(context, host)
-            all_node_dss[host] = datastores
+        nodes = self.get_compute_nodes_of_vcenter(context)
+        all_node_dss = {} 
+        for node in nodes:
+            datastores = self.vcmcompute_api.get_datastores(context, node)
+            all_node_dss[node] = datastores
         return all_node_dss
+
+
+    @extensions.expected_errors(())
+    def datastore_clusters(self, req):
+        """ Get datastore clusters for vCenter. """
+        context = req.environ['nova.context']
+        authorize(context)
+        nodes = self.get_compute_nodes_of_vcenter(context)
+        all_node_ds_clusters = {} 
+        for node in nodes:
+            ds_clusters = self.vcmcompute_api.get_datastore_clusters(context, node)
+            all_node_ds_clusters[node] = ds_clusters
+        return all_node_ds_clusters
+
+
+    @extensions.expected_errors(())
+    def hosts(self, req):
+        """ Get esxi hosts for vCenter cluster. """
+        context = req.environ['nova.context']
+        authorize(context)
+        nodes = self.get_compute_nodes_of_vcenter(context)
+        all_node_esxi_hosts = {} 
+        for node in nodes:
+            esxi_hosts = self.vcmcompute_api.get_esxi_hosts(context, node)
+            all_node_esxi_hosts[node] = esxi_hosts
+        return all_node_esxi_hosts
+
+
+    @extensions.expected_errors(())
+    def vnc_port_state(self, req, id=None):
+        """ Get vnc port for vCenter cluster. """
+        context = req.environ['nova.context']
+        authorize(context)
+        nodes = self.get_compute_nodes_of_vcenter(context)
+        vnc_port = None
+        if id is None or id in ['allocated', 'available']:
+            vnc_port = self.vcmcompute_api.get_vnc_port_state(context, nodes[0], req_type=id)
+        return vnc_port
 
 
     @extensions.expected_errors(())
@@ -71,11 +135,11 @@ class DatacenterController(wsgi.Controller):
         """ Get all node vm networks. """
         context = req.environ['nova.context']
         authorize(context)
-        hosts = self.get_vcenter_hosts(context)
+        nodes = self.get_compute_nodes_of_vcenter(context)
         all_vm_nets={} 
-        for host in hosts:
-            net = self.vcmcompute_api.get_virtual_adapter_network(context, host)
-            all_vm_nets[host] = net
+        for node in nodes:
+            net = self.vcmcompute_api.get_virtual_adapter_network(context, node)
+            all_vm_nets[node] = net
         return all_vm_nets
 
 
@@ -84,20 +148,13 @@ class DatacenterController(wsgi.Controller):
         """ Get all node physical networks. """
         context = req.environ['nova.context']
         authorize(context)
-        hosts = self.get_vcenter_hosts(context)
+        nodes = self.get_compute_nodes_of_vcenter(context)
         all_phy_nets={} 
-        for host in hosts:
-            net = self.vcmcompute_api.get_physical_adapter_network(context, host)
-            all_phy_nets[host] = net
+        for node in nodes:
+            net = self.vcmcompute_api.get_physical_adapter_network(context, node)
+            all_phy_nets[node] = net
         return all_phy_nets
 
-
-    @extensions.expected_errors(())
-    def detail(self, req):
-        context = req.environ['nova.context']
-        authorize(context)
-        print 'detail' * 100
-        print "\n"
 
     @extensions.expected_errors((404, 501))
     def uptime(self, req, id):
@@ -117,10 +174,18 @@ class Datacenters(extensions.V21APIExtensionBase):
         resources = [extensions.ResourceExtension(ALIAS,
                 DatacenterController(),
                 collection_actions={'datastores': 'GET',
+                                    'datastore_clusters': 'GET',
+                                    'hosts': 'GET',
                                     'vm_network': 'GET',
                                     'phy_network': 'GET',
-                                    'detail': 'GET'},
-                member_actions={'uptime': 'GET'})]
+                                    'vnc_port_state': 'GET',
+                                    'detail': 'GET'
+                                    },
+                member_actions={'uptime': 'GET',
+                                'vnc_port_state': 'GET',
+                                'detail': 'GET'
+                                }
+                )]
         return resources
 
     def get_controller_extensions(self):

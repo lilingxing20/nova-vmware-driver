@@ -206,20 +206,47 @@ class VCMComputeManager(manager.ComputeManager):
             instance.save()
 
     @wrap_exception()
-    def get_datacenters(self, context):
+    def get_datacenters(self, context, detail=False):
         try:
-            return self.driver.get_datacenters(context)
+            return self.driver.get_datacenters(context, detail=detail)
         except Exception:
             msg = "Got exception when get datacenters"
             LOG.warn(msg)
             raise
 
     @wrap_exception()
-    def get_datastores(self, context, cluster_name):
+    def get_datastores(self, context, detail=False):
         try:
-            return self.driver.get_datastores(context, cluster_name)
+            return self.driver.get_datastores(context, detail=detail)
         except Exception:
             msg = "Got exception when get datastores"
+            LOG.warn(msg)
+            raise
+
+    @wrap_exception()
+    def get_datastore_clusters(self, context, detail=False):
+        try:
+            return self.driver.get_datastore_clusters(context, detail=detail)
+        except Exception:
+            msg = "Got exception when get datastore clusters"
+            LOG.warn(msg)
+            raise
+
+    @wrap_exception()
+    def get_esxi_hosts(self, context, detail=False):
+        try:
+            return self.driver.get_esxi_hosts(context, detail=detail)
+        except Exception:
+            msg = "Got exception when get esxi hosts"
+            LOG.warn(msg)
+            raise
+
+    @wrap_exception()
+    def get_vnc_port_state(self, context, req_type):
+        try:
+            return self.driver.get_vnc_port_state(context, req_type)
+        except Exception:
+            msg = "Got exception when get vnc port"
             LOG.warn(msg)
             raise
 

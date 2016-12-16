@@ -24,7 +24,7 @@ authorize = extensions.extension_authorizer('compute', ALIAS)
 def _translate_server_snapshot_view(server_snapshot, instance):
     result = {
         'snapshot_id': server_snapshot['snapshot_id'],
-
+        'parent_snapshot_id': server_snapshot['parent_snapshot_id'],
         'name': server_snapshot['name'],
         'description': server_snapshot['description'],
         'create_time': server_snapshot['create_time'],

@@ -1364,15 +1364,30 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
         return self._volumeops.get_disks_info(instance, volume_uuids)
     # Vsettan-only end
 
-    def get_datacenters(self, context):
-        """ Get all datacenters """
-        datacenters = ds_util.get_all_datacenter(self._session)
+    def get_datacenters(self, context, detail=False):
+        """ Get datacenters for vCenter server. """
+        datacenters = ds_util.get_datacenters(self._session, detail=detail)
         return datacenters
 
-    def get_datastores(self, context, cluster_name=None):
-        """ Get datastores """
-        datastores = ds_util.get_all_datastore(self._session)
+    def get_datastores(self, context, detail=False):
+        """ Get datastores for vCenter cluster. """
+        datastores = ds_util.get_datastores(self._session, detail=detail)
         return datastores
+
+    def get_datastore_clusters(self, context, detail=False):
+        """ Get datastore clusters for vCenter server. """
+        ds_clusters = ds_util.get_datastore_clusters(self._session, detail=detail)
+        return ds_clusters
+
+    def get_esxi_hosts(self, context, detail=False):
+        """ Get esxi hosts for vCenter cluster. """
+        esxi_hosts = ds_util.get_esxi_hosts(self._session, detail=detail)
+        return esxi_hosts
+
+    def get_vnc_port_state(self, context, req_type):
+        """ Get vnc available port for vCenter cluster. """
+        vnc_port_state = vm_util.get_vnc_port_state(self._session, req_type)
+        return vnc_port_state
 
     def get_virtual_adapter_network(self, context):
         """ Get datastores """

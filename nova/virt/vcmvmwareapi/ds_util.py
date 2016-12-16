@@ -616,31 +616,29 @@ def _filter_datastores_matching_storage_policy(session, data_stores,
               storage_policy)
 
 ## add by lixx
-def get_all_datacenter(session):
-    """Get the all datacenter list."""
-    dcs = session._call_method(vim_util, "get_objects",
-                    "Datacenter", ["name","overallStatus"])
-    dcs_info_list = []
-    for obj_content in dcs.objects:
-        # the propset attribute "need not be set" by returning API
-        if not hasattr(obj_content, 'propSet'):
-            continue
-        propdict = vm_util.propset_dict(obj_content.propSet)
-        dcs_info_list.append(propdict)
+def get_datacenters(session, properties_list=['name'], detail=False):
+    """ Get datacenters for vCenter server. """
+    if detail:
+        properties_list = ["alarmActionsEnabled","datastore","name","network","overallStatus","parent"]
+    if not properties_list: 
+        return ["alarmActionsEnabled","availableField","configIssue","configStatus","configuration","customValue","datastore","datastoreFolder","declaredAlarmState","disabledMethod","effectiveRole","hostFolder","name","network","networkFolder","overallStatus","parent","permission","recentTask","tag","triggeredAlarmState","value","vmFolder"]
+    retrieve_result = session._call_method(vim_util, "get_objects",
+                                           "Datacenter", properties_list)
+    dcs_info_list = vm_util.retrieve_result_propset_dict_list(session, 
+                                                              retrieve_result)
     return dcs_info_list
 
 
-def get_all_datastore(session, cluster=None, host=None):
-    """Get the all datastore list."""
+def get_datastores(session, cluster=None, host=None, 
+                   properties_list=['name'], detail=False):
+    if detail:
+        properties_list = ["alarmActionsEnabled","name","overallStatus","parent","summary.capacity","summary.freeSpace","summary.type","summary.accessible","summary.maintenanceMode","vm"]
+    if not properties_list: 
+        return ["alarmActionsEnabled","availableField","browser","capability","configIssue","configStatus","customValue","declaredAlarmState","disabledMethod","effectiveRole","host","info","iormConfiguration","name","overallStatus","parent","permission","recentTask","summary","tag","triggeredAlarmState","value","vm"]
+    """ Get datastores for vCenter cluster. """
     if cluster is None and host is None:
-        data_stores = session._call_method(vim_util, "get_objects",
-                                            "Datastore", 
-                                            ["name", "overallStatus", 
-                                                "summary.type", 
-                                                "summary.capacity", 
-                                                "summary.freeSpace",
-                                                "summary.accessible",
-                                                "summary.maintenanceMode"])
+        retrieve_result = session._call_method(vim_util, "get_objects",
+                                               "Datastore", properties_list)
     else:
         if cluster is not None:
             datastore_ret = session._call_method(
@@ -658,22 +656,67 @@ def get_all_datastore(session, cluster=None, host=None):
             raise exception.DatastoreNotFound()
     
         data_store_mors = datastore_ret.ManagedObjectReference
-        data_stores = session._call_method(vim_util,
+        retrieve_result = vm_util.get_mor_properties(session, 
+                                                    "Datastore", 
+                                                    data_store_mors,
+                                                    properties_list)
+    datastores_list = vm_util.retrieve_result_propset_dict_list(session, 
+                                                                retrieve_result)
+    return datastores_list
+
+
+def get_datastore_clusters(session, properties_list=['name'], detail=False):
+    """ Get datastore clusters for vCenter server. """
+    if detail:
+        properties_list = ["alarmActionsEnabled","childEntity","name","overallStatus","parent","summary.capacity","summary.freeSpace"]
+    if not properties_list:
+        return ["alarmActionsEnabled","availableField","childEntity","childType","configIssue","configStatus","customValue","declaredAlarmState","disabledMethod","effectiveRole","name","overallStatus","parent","permission","podStorageDrsEntry","recentTask","summary","tag","triggeredAlarmState","value"]
+
+    retrieve_result = session._call_method(vim_util, 
+                                           "get_objects",
+                                           "StoragePod",
+                                           properties_list)
+    ds_clusters = vm_util.retrieve_result_propset_dict_list(session, 
+                                                            retrieve_result)
+    ds_cluster_list = []
+    for ds_cluster in ds_clusters:
+        try:
+            ds_child_aomor = ds_cluster.pop('childEntity')
+            ds_datastores = vm_util.get_mor_properties(session, 
+                                                       'Datastore', 
+                                                       ds_child_aomor)
+            ds_cluster['datastore'] = ds_datastores
+        except Exception as excep:
+            LOG.warn(_LE("Failed to get datastore cluster child datastore,\
+                          warning references %s."), excep)
+        ds_cluster_list.append(ds_cluster) 
+
+    return ds_cluster_list
+
+
+def get_esxi_hosts(session, cluster_name=None, 
+                            properties_list=['name'], 
+                            detail=False):
+    """ Get esxi hosts for vCenter cluster. """
+    if detail:
+        properties_list = ["name", "parent", "datastore", "vm", "summary.hardware.vendor", "summary.hardware.model", "summary.hardware.uuid", "summary.hardware.memorySize", "summary.hardware.cpuModel", "summary.hardware.cpuMhz", "summary.hardware.numCpuPkgs", "summary.hardware.numCpuThreads", "summary.hardware.numNics", "summary.hardware.numHBAs", "summary.runtime.connectionState","summary.runtime.powerState","summary.runtime.bootTime", "summary.overallStatus", "summary.managementServerIp"]
+    if not properties_list:
+        return ['alarmActionsEnabled', 'availableField', 'capability', 'config', 'configIssue', 'configManager', 'configStatus', 'customValue', 'datastore', 'datastoreBrowser', 'declaredAlarmState', 'disabledMethod', 'effectiveRole', 'hardware', 'licensableResource', 'name', 'network', 'overallStatus', 'parent', 'permission', 'recentTask', 'runtime', 'summary', 'systemResources', 'tag', 'triggeredAlarmState', 'value', 'vm']
+
+    if cluster_name:
+        cluster_obj = vm_util.get_cluster_ref_by_name(session, cluster_name)
+        # Get the Host and Resource Pool Managed Object Refs
+        host_aomor = session._call_method(vim_util, "get_dynamic_property", 
+                                          cluster_obj, 
+                                          "ClusterComputeResource", "host")
+        host_mors = host_aomor.ManagedObjectReference
+        retrieve_result =  session._call_method(vim_util, 
                                 "get_properties_for_a_collection_of_objects",
-                                "Datastore", data_store_mors,
-                                ["summary.type", "summary.name",
-                                 "summary.capacity", "summary.freeSpace",
-                                 "summary.accessible",
-                                 "summary.maintenanceMode",
-                                 ])
-    datastores_info_list = []
-    for obj_content in data_stores.objects:
-        # the propset attribute "need not be set" by returning API
-        if not hasattr(obj_content, 'propSet'):
-            continue
-        propdict = vm_util.propset_dict(obj_content.propSet)
-        datastores_info_list.append(propdict)
-    return datastores_info_list
-
-
+                                "HostSystem", host_mors, properties_list)
+    else:
+        retrieve_result = session._call_method(vim_util, 'get_objects', 'HostSystem', 
+                                     properties_list)
+    hosts_list = vm_util.retrieve_result_propset_dict_list(session, 
+                                                           retrieve_result)
+    return hosts_list
 

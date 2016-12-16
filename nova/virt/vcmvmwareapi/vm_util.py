@@ -1874,6 +1874,31 @@ def get_vnc_port(session):
     raise exception.ConsolePortRangeExhausted(min_port=min_port,
                                               max_port=max_port)
 
+def get_vnc_port_state(session, req_type):
+    min_port = CONF.vmware.vnc_port
+    port_total = CONF.vmware.vnc_port_total
+    allocated_ports = _get_allocated_vnc_ports(session)
+    max_port = min_port + port_total
+    available_port = None
+    for port in range(min_port, max_port):
+        if port not in allocated_ports:
+            available_port = port
+            break
+    if not available_port:
+        raise exception.ConsolePortRangeExhausted(min_port=min_port,
+                                                  max_port=max_port)
+    vnc_port_state = {}
+    vnc_port_state['min_port'] = min_port
+    vnc_port_state['max_port'] = max_port
+    if req_type is None:
+        vnc_port_state['allocated_ports'] = allocated_ports
+        vnc_port_state['available_port'] = available_port
+    elif req_type == 'allocated':
+        vnc_port_state['allocated_ports'] = allocated_ports
+    elif req_type == 'available':
+        vnc_port_state['available_port'] = available_port
+    return vnc_port_state
+
 
 def _get_allocated_vnc_ports(session):
     """Return an integer set of all allocated VNC ports."""
@@ -2198,6 +2223,61 @@ def propset_dict(propset):
 
     return {prop.name: prop.val for prop in propset}
 
+def get_mor_properties(session, mor_type, aomor, properties=None):
+    if not properties:
+        properties = ['name']
+    LOG.debug(_("Parsing %s properties." % mor_type))
+    result_list = []
+    if hasattr(aomor, 'ManagedObjectReference'):
+        mors = aomor.ManagedObjectReference
+        retrieve_result = session._call_method(
+                                vim_util, 
+                                "get_properties_for_a_collection_of_objects",
+                                mor_type,
+                                mors,
+                                properties)
+        result_list = retrieve_result_propset_dict_list(session, retrieve_result)
+    return result_list
+
+def get_mor_parent_name(session, sudsobject):
+    result_dict = {}
+    result = session._call_method(vim_util, "get_dynamic_properties", sudsobject, sudsobject._type, ['name', 'parent'])
+    LOG.debug("Parsing parent %s name %s." ,sudsobject, result.get('name'))
+    if sudsobject._type == 'Datacenter':
+        result_dict['datacenter'] = result.get('name')
+    elif sudsobject._type == 'ClusterComputeResource':
+        result_dict['cluster'] = result.get('name')
+    if 'parent' in result.keys():
+        child_result = get_mor_parent_name(session, result.get('parent'))
+        result_dict.update(child_result)
+    return result_dict
+
+def parsing_mor_propset_dict(session, propset):
+    prop_dict = {}
+    for prop in propset:
+        if prop.name == 'datastore':
+            val = get_mor_properties(session, 'Datastore', prop.val)
+        elif prop.name == 'network':
+            val = get_mor_properties(session, 'Network', prop.val)
+        elif prop.name == 'vm':
+            val = get_mor_properties(session, 'VirtualMachine', prop.val, ['name','config.instanceUuid'])
+        elif prop.name == 'parent':
+            val = get_mor_parent_name(session, prop.val)
+        else:
+            val = prop.val
+        prop_dict[prop.name] = val
+    return prop_dict
+
+def retrieve_result_propset_dict_list(session, retrieve_result):
+    result_list = []
+    if hasattr(retrieve_result, 'objects'):
+        for obj_content in retrieve_result.objects:
+            # the propset attribute "need not be set" by returning API
+            if not hasattr(obj_content, 'propSet'):
+                continue
+            propdict = parsing_mor_propset_dict(session, obj_content.propSet)
+            result_list.append(propdict)
+    return result_list
 
 def get_vmdk_backed_disk_uuid(hardware_devices, volume_uuid):
     if hardware_devices.__class__.__name__ == "ArrayOfVirtualDevice":
@@ -2995,13 +3075,15 @@ def get_snapshot_ref_by_snapshot_id(session, vm_ref, snapshot_id):
                              % snapshot_id)
 
 
-def build_snapshot_obj(current_snapshot_id, vm_snapshot_tree):
+def build_snapshot_obj(current_snapshot_id, vm_snapshot_tree,
+                        parent_snapshot_id=0):
     """This method is used to build instance_snapshot object from
     VMware VirtualMachineSnapshotTree data object.
 
     """
     result = {}
     snapshot = {}
+    snapshot['parent_snapshot_id'] = parent_snapshot_id
     snapshot['snapshot_id'] = vm_snapshot_tree.id
     snapshot['name'] = vm_snapshot_tree.name
     snapshot['description'] = vm_snapshot_tree.description
@@ -3022,7 +3104,8 @@ def build_snapshot_obj(current_snapshot_id, vm_snapshot_tree):
               {'id': snapshot['snapshot_id'], 'name': snapshot['name']})
     if hasattr(vm_snapshot_tree, 'childSnapshotList'):
         for sp in vm_snapshot_tree.childSnapshotList:
-            children = build_snapshot_obj(current_snapshot_id, sp)
+            children = build_snapshot_obj(current_snapshot_id, sp,
+                                        parent_snapshot_id=vm_snapshot_tree.id)
             result.update(children)
     return result
 # Vsettan-only stop live snapshot

@@ -65,18 +65,35 @@ class ComputeAPI(rpcapi.ComputeAPI):
                           instance=instance,
                           snapshot_id=snapshot_id)
 
-    def get_datacenters(self, ctxt, host, do_cast=False):
+    def get_datacenters(self, ctxt, host, detail=False, do_cast=False):
         version = '4.0'
         cctxt = self.client.prepare(server=host, version=version)
         rpc_method = cctxt.cast if do_cast else cctxt.call
-        return rpc_method(ctxt, 'get_datacenters')
+        return rpc_method(ctxt, 'get_datacenters', detail=detail)
 
-    def get_datastores(self, ctxt, host, cluster_name=None, do_cast=False):
+    def get_datastores(self, ctxt, host, detail=False, do_cast=False):
         version = '4.0'
         cctxt = self.client.prepare(server=host, version=version)
         rpc_method = cctxt.cast if do_cast else cctxt.call
-        return rpc_method(ctxt, 'get_datastores', 
-                          cluster_name=cluster_name)
+        return rpc_method(ctxt, 'get_datastores', detail=detail)
+
+    def get_datastore_clusters(self, ctxt, host, detail=False, do_cast=False):
+        version = '4.0'
+        cctxt = self.client.prepare(server=host, version=version)
+        rpc_method = cctxt.cast if do_cast else cctxt.call
+        return rpc_method(ctxt, 'get_datastore_clusters', detail=detail)
+
+    def get_esxi_hosts(self, ctxt, host, detail=False, do_cast=False):
+        version = '4.0'
+        cctxt = self.client.prepare(server=host, version=version)
+        rpc_method = cctxt.cast if do_cast else cctxt.call
+        return rpc_method(ctxt, 'get_esxi_hosts', detail=detail)
+
+    def get_vnc_port_state(self, ctxt, host, req_type, do_cast=False):
+        version = '4.0'
+        cctxt = self.client.prepare(server=host, version=version)
+        rpc_method = cctxt.cast if do_cast else cctxt.call
+        return rpc_method(ctxt, 'get_vnc_port_state', req_type=req_type)
 
     def get_virtual_adapter_network(self, ctxt, host, cluster_name=None, 
                                     do_cast=False):

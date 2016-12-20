@@ -17,14 +17,17 @@
 
 from oslo_config import cfg
 from oslo_log import log as logging
+from oslo_utils import versionutils
+from oslo_vmware import vim_util as vutil
 from oslo_vmware import exceptions as vexc
 
 from nova import exception
 from nova.i18n import _, _LW
 from nova.network import model
-from nova.virt.vcmvmwareapi import vim_util
+from nova.virt.vcmvmwareapi import constants
 from nova.virt.vcmvmwareapi import network_util
 from nova.virt.vcmvmwareapi import vm_util
+from nova.virt.vcmvmwareapi import vim_util
 
 LOG = logging.getLogger(__name__)
 CONF = cfg.CONF
@@ -35,7 +38,11 @@ vmwareapi_vif_opts = [
                help='Physical ethernet adapter name for vlan networking'),
     cfg.StrOpt('integration_bridge',
                default='br-int',
-               help='Name of Integration Bridge'),
+               help='This option should be configured only when using the '
+                    'NSX-MH Neutron plugin. This is the name of the '
+                    'integration bridge on the ESXi. This should not be set '
+                    'for any other Neutron plugin. Hence the default value '
+                    'is not set.'),
     # Vsettan-only start
     cfg.BoolOpt('ignore_vswitch_validation',
                default=False,

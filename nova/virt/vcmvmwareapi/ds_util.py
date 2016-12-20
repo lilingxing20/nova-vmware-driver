@@ -1,4 +1,4 @@
-# Copyright (c) 2016 VMware, Inc.
+# Copyright (c) 2014 VMware, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -27,6 +27,7 @@ from oslo_log import log as logging
 from oslo_vmware import exceptions as vexc
 from oslo_vmware.objects import datastore as ds_obj
 from oslo_vmware import pbm
+from oslo_vmware import vim_util as vutil
 
 from nova import exception
 from nova.i18n import _, _LE, _LI
@@ -150,53 +151,6 @@ def _is_datastore_valid(propdict, datastore_regex, ds_types):
              _is_ds_name_legal(propdict['summary.name']))) # Vsettan-only
 
 
-# Vsettan-only begin
-def get_storage_pod_ref_by_name(session, storage_pod_name):
-    """Get reference to the StoragePod with the name specified."""
-    if storage_pod_name is None:
-        return None
-    pods = session._call_method(vim_util, "get_objects",
-                                "StoragePod", ["name"])
-    return vm_util._get_object_from_results(session, pods, storage_pod_name,
-                                    vm_util._get_object_for_value)
-# Vsettan-only end
-
-
-# Vsettan-only start
-def get_ds_capacity_freespace_for_compute(session, cluster=None,
-                                          host=None, datastore_regex=None,
-                                          storage_pod=None):
-    """Get all accessible datastores' capacity and freespace
-       for certain cluster or host.
-    """
-    datastores = get_available_datastores(session, cluster, host, datastore_regex,
-                                          storage_pod) #Vsettan-only
-    total_freespace = 0
-    total_capacity = 0
-    for ds in datastores:
-        total_freespace += ds.freespace
-        total_capacity += ds.capacity
-    return total_capacity, total_freespace
-
-def build_datastore_path(datastore_name, path):
-    """Build the datastore compliant path."""
-    return "[%s] %s" % (datastore_name, path)
-
-# Vsettan-only end
-
-
-# Vsettan-only start
-def _is_ds_name_legal(name):
-    name_pattern = "[\s0-9a-zA-Z_-]*"
-    m = re.match(name_pattern, name)
-    if m.group() != name:
-        LOG.warn(("Illegal datastore name '%s': can only contain "
-                   "numbers, lowercase and uppercase letters, whitespaces, '_' "
-                   "and '-'.") % name)
-        return False
-    return True
-# Vsettan-only end
-
 
 def get_datastore(session, cluster,
                   host=None, #Vsettan-only
@@ -270,29 +224,6 @@ def get_datastore(session, cluster,
             % datastore_regex.pattern)
     else:
         raise exception.DatastoreNotFound()
-
-
-# Vsettan-only start
-def _is_ds_not_in_storagepod(propdict, storage_pod):
-    ds_parent = propdict['parent']
-    if ds_parent is None:
-        return True
-    if ((ds_parent._type != storage_pod._type) or
-        (ds_parent.value != storage_pod.value)):
-        return True
-    return False
-# Vsettan-only end
-
-
-def get_datastore_by_ref(session, ds_ref):
-    lst_properties = ["summary.type", "summary.name",
-                      "summary.capacity", "summary.freeSpace"]
-    props = session._call_method(vim_util, "get_object_properties",
-                                 None, ds_ref, "Datastore", lst_properties)
-    query = vm_util.get_values_from_object_properties(session, props)
-    return ds_obj.Datastore(ds_ref, query["summary.name"],
-                     capacity=query["summary.capacity"],
-                     freespace=query["summary.freeSpace"])
 
 
 def _get_allowed_datastores(data_stores, datastore_regex,
@@ -614,6 +545,138 @@ def _filter_datastores_matching_storage_policy(session, data_stores,
             return data_stores
     LOG.error(_LE("Unable to retrieve storage policy with name %s"),
               storage_policy)
+
+## Mitak update
+def _update_datacenter_cache_from_objects(session, dcs):
+    """Updates the datastore/datacenter cache."""
+    while dcs:
+        for dco in dcs.objects:
+            dc_ref = dco.obj
+            ds_refs = []
+            prop_dict = vm_util.propset_dict(dco.propSet)
+            name = prop_dict.get('name')
+            vmFolder = prop_dict.get('vmFolder')
+            datastore_refs = prop_dict.get('datastore')
+            if datastore_refs:
+                datastore_refs = datastore_refs.ManagedObjectReference
+                for ds in datastore_refs:
+                    ds_refs.append(ds.value)
+            else:
+                LOG.debug("Datacenter %s doesn't have any datastore "
+                          "associated with it, ignoring it", name)
+            for ds_ref in ds_refs:
+                _DS_DC_MAPPING[ds_ref] = DcInfo(ref=dc_ref, name=name,
+                                                vmFolder=vmFolder)
+        dcs = session._call_method(vutil, 'continue_retrieval', dcs)
+
+
+def get_dc_info(session, ds_ref):
+    """Get the datacenter name and the reference."""
+    dc_info = _DS_DC_MAPPING.get(ds_ref.value)
+    if not dc_info:
+        dcs = session._call_method(vim_util, "get_objects",
+                "Datacenter", ["name", "datastore", "vmFolder"])
+        _update_datacenter_cache_from_objects(session, dcs)
+        dc_info = _DS_DC_MAPPING.get(ds_ref.value)
+    return dc_info
+
+
+def dc_cache_reset():
+    global _DS_DC_MAPPING
+    _DS_DC_MAPPING = {}
+
+
+def get_connected_hosts(session, datastore):
+    """Get all the hosts to which the datastore is connected.
+
+    :param datastore: Reference to the datastore entity
+    :return: List of managed object references of all connected
+             hosts
+    """
+    host_mounts = session._call_method(vutil, 'get_object_property',
+                                       datastore, 'host')
+    if not hasattr(host_mounts, 'DatastoreHostMount'):
+        return []
+
+    connected_hosts = []
+    for host_mount in host_mounts.DatastoreHostMount:
+        connected_hosts.append(host_mount.key.value)
+
+    return connected_hosts
+## Mitak update end
+
+
+# Vsettan-only begin
+def get_storage_pod_ref_by_name(session, storage_pod_name):
+    """Get reference to the StoragePod with the name specified."""
+    if storage_pod_name is None:
+        return None
+    pods = session._call_method(vim_util, "get_objects",
+                                "StoragePod", ["name"])
+    return vm_util._get_object_from_results(session, pods, storage_pod_name,
+                                    vm_util._get_object_for_value)
+# Vsettan-only end
+
+
+# Vsettan-only start
+def get_ds_capacity_freespace_for_compute(session, cluster=None,
+                                          host=None, datastore_regex=None,
+                                          storage_pod=None):
+    """Get all accessible datastores' capacity and freespace
+       for certain cluster or host.
+    """
+    datastores = get_available_datastores(session, cluster, host, datastore_regex,
+                                          storage_pod) #Vsettan-only
+    total_freespace = 0
+    total_capacity = 0
+    for ds in datastores:
+        total_freespace += ds.freespace
+        total_capacity += ds.capacity
+    return total_capacity, total_freespace
+
+def build_datastore_path(datastore_name, path):
+    """Build the datastore compliant path."""
+    return "[%s] %s" % (datastore_name, path)
+
+# Vsettan-only end
+
+
+# Vsettan-only start
+def _is_ds_name_legal(name):
+    name_pattern = "[\s0-9a-zA-Z_-]*"
+    m = re.match(name_pattern, name)
+    if m.group() != name:
+        LOG.warn(("Illegal datastore name '%s': can only contain "
+                   "numbers, lowercase and uppercase letters, whitespaces, '_' "
+                   "and '-'.") % name)
+        return False
+    return True
+# Vsettan-only end
+
+
+# Vsettan-only start
+def _is_ds_not_in_storagepod(propdict, storage_pod):
+    ds_parent = propdict['parent']
+    if ds_parent is None:
+        return True
+    if ((ds_parent._type != storage_pod._type) or
+        (ds_parent.value != storage_pod.value)):
+        return True
+    return False
+
+
+def get_datastore_by_ref(session, ds_ref):
+    lst_properties = ["summary.type", "summary.name",
+                      "summary.capacity", "summary.freeSpace"]
+    props = session._call_method(vim_util, "get_object_properties",
+                                 None, ds_ref, "Datastore", lst_properties)
+    query = vm_util.get_values_from_object_properties(session, props)
+    return ds_obj.Datastore(ds_ref, query["summary.name"],
+                     capacity=query["summary.capacity"],
+                     freespace=query["summary.freeSpace"])
+
+# Vsettan-only end
+
 
 ## add by lixx
 def get_datacenters(session, properties_list=['name'], detail=False):

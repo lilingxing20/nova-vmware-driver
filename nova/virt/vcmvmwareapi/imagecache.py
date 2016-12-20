@@ -1,4 +1,4 @@
-# Copyright (c) 2016 VMware, Inc.
+# Copyright (c) 2014 VMware, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -40,6 +40,7 @@ from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_utils import timeutils
 from oslo_vmware import exceptions as vexc
+from oslo_vmware import vim_util as vutil
 
 from nova.i18n import _LI, _LW
 from nova.virt import imagecache
@@ -112,7 +113,7 @@ class ImageCacheManager(imagecache.ImageCacheManager):
 
     def _get_timestamp_filename(self):
         return '%s%s' % (TIMESTAMP_PREFIX,
-                         timeutils.strtime(fmt=TIMESTAMP_FORMAT))
+                         timeutils.utcnow().strftime(TIMESTAMP_FORMAT))
 
     def _get_datetime_from_filename(self, timestamp_filename):
         ts = timestamp_filename.lstrip(TIMESTAMP_PREFIX)
@@ -121,9 +122,12 @@ class ImageCacheManager(imagecache.ImageCacheManager):
     def _get_ds_browser(self, ds_ref):
         ds_browser = self._ds_browser.get(ds_ref.value)
         if not ds_browser:
-            ds_browser = vim_util.get_dynamic_property(
-                    self._session.vim, ds_ref,
-                    "Datastore", "browser")
+#            ds_browser = vim_util.get_dynamic_property(
+#                    self._session.vim, ds_ref,
+#                    "Datastore", "browser")
+            ds_browser = vutil.get_object_property(self._session.vim,
+                                                   ds_ref,
+                                                   "browser")
             self._ds_browser[ds_ref.value] = ds_browser
         return ds_browser
 
@@ -148,7 +152,7 @@ class ImageCacheManager(imagecache.ImageCacheManager):
         ds_browser = self._get_ds_browser(datastore.ref)
         for image in unused_images:
             path = self.timestamp_folder_get(ds_path, image)
-            # Lock to ensure that the spawn will not try and access a image
+            # Lock to ensure that the spawn will not try and access an image
             # that is currently being deleted on the datastore.
             with lockutils.lock(str(path), lock_file_prefix='nova-vmware-ts',
                                 external=True):

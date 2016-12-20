@@ -58,9 +58,10 @@ def _get_network_obj(session, network_objects, network_name):
             for network in network_refs:
                 # Get network properties
                 if network._type == 'DistributedVirtualPortgroup':
-                    props = session._call_method(vim_util,
-                                "get_dynamic_property", network,
-                                "DistributedVirtualPortgroup", "config")
+                    props = session._call_method(vutil,
+                                                 "get_object_property",
+                                                 network,
+                                                 "config")
                     # NOTE(asomya): This only works on ESXi if the port binding
                     # is set to ephemeral
                     # For a VLAN the network name will be the UUID. For a VXLAN
@@ -69,17 +70,17 @@ def _get_network_obj(session, network_objects, network_name):
                     if network_name in props.name:
                         network_obj['type'] = 'DistributedVirtualPortgroup'
                         network_obj['dvpg'] = props.key
-                        dvs_props = session._call_method(vim_util,
-                                        "get_dynamic_property",
+                        dvs_props = session._call_method(vutil,
+                                        "get_object_property",
                                         props.distributedVirtualSwitch,
-                                        "DistributedVirtualSwitch", #Vsettan-only
                                         "uuid")
                         network_obj['dvsw'] = dvs_props
                         return network_obj
                 else:
-                    props = session._call_method(vim_util,
-                                "get_dynamic_property", network,
-                                "Network", "summary.name")
+                    props = session._call_method(vutil,
+                                                 "get_object_property",
+                                                 network,
+                                                 "summary.name")
                     if props == network_name:
                         network_obj['type'] = 'Network'
                         network_obj['name'] = network_name
@@ -185,9 +186,10 @@ def get_vswitch_for_vlan_interface(session, vlan_interface, cluster=None,
     else:
         host_mor = host
     # Vsettan-only end
-    vswitches_ret = session._call_method(vim_util,
-                "get_dynamic_property", host_mor,
-                "HostSystem", "config.network.vswitch")
+    vswitches_ret = session._call_method(vutil,
+                                         "get_object_property",
+                                         host_mor,
+                                         "config.network.vswitch")
     # Meaning there are no vSwitches on the host. Shouldn't be the case,
     # but just doing code check
     if not vswitches_ret:
@@ -215,9 +217,10 @@ def check_if_vlan_interface_exists(session, vlan_interface, cluster=None,
     else:
         host_mor = host
     # Vsettan-only end
-    physical_nics_ret = session._call_method(vim_util,
-                "get_dynamic_property", host_mor,
-                "HostSystem", "config.network.pnic")
+    physical_nics_ret = session._call_method(vutil,
+                                             "get_object_property",
+                                             host_mor,
+                                             "config.network.pnic")
     # Meaning there are no physical nics on the host
     if not physical_nics_ret:
         return False
@@ -250,6 +253,7 @@ def get_vlanid_and_vswitch_for_portgroup(session, pg_name, cluster=None,
         if p_gp.spec.name == pg_name:
             p_grp_vswitch_name = p_gp.vswitch.split("-")[-1]
             return p_gp.spec.vlanId, p_grp_vswitch_name
+    return None, None
 
 
 def create_port_group(session, pg_name, vswitch_name, vlan_id=0, cluster=None,
@@ -269,9 +273,10 @@ def create_port_group(session, pg_name, vswitch_name, vlan_id=0, cluster=None,
     else:
         host_mor = host
     # Vsettan-only end
-    network_system_mor = session._call_method(vim_util,
-        "get_dynamic_property", host_mor,
-        "HostSystem", "configManager.networkSystem")
+    network_system_mor = session._call_method(vutil,
+                                              "get_object_property",
+                                              host_mor,
+                                              "configManager.networkSystem")
     LOG.debug("Creating Port Group with name %s on "
               "the ESX host", pg_name)
     try:
@@ -287,5 +292,3 @@ def create_port_group(session, pg_name, vswitch_name, vlan_id=0, cluster=None,
         LOG.debug("Port Group %s already exists.", pg_name)
     LOG.debug("Created Port Group with name %s on "
               "the ESX host", pg_name)
-
-

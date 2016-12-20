@@ -35,10 +35,12 @@ from oslo_vmware import vim_util
 from nova.compute import task_states
 import nova.conf
 from nova import exception
-from nova import context as nova_context # Vsettan-only (prs-related)
-from nova import objects # Vsettan-only (prs-related)
 from nova.i18n import _, _LI, _LE, _LW
 from nova.virt import driver
+
+from nova import context as nova_context
+from nova import objects as nova_objects
+
 from nova.virt.vcmvmwareapi import ds_util
 from nova.virt.vcmvmwareapi import constants
 from nova.virt.vcmvmwareapi import error_util
@@ -76,6 +78,22 @@ vmwareapi_opts = [
                help='Name of a VMware Cluster ComputeResource.'),
     cfg.StrOpt('datastore_regex',
                help='Regex to match the name of a datastore.'),
+    cfg.FloatOpt('task_poll_interval',
+                 default=0.5,
+                 help='The interval used for polling of remote tasks.'),
+    cfg.IntOpt('api_retry_count',
+               default=10,
+               help='The number of times we retry on failures, e.g., '
+                    'socket error, etc.'),
+    cfg.PortOpt('vnc_port',
+                default=5900,
+                help='VNC starting port'),
+    cfg.IntOpt('vnc_port_total',
+               default=10000,
+               help='Total number of VNC ports'),
+    cfg.BoolOpt('use_linked_clone',
+                default=True,
+                help='Whether to use linked clone'),
     #Vsettan vm name for vCenter BEGIN
     cfg.BoolOpt('use_displayname_uuid_for_vmname',
                 default=False,
@@ -116,22 +134,6 @@ vmwareapi_opts = [
                default='vmdk',
                help='snapshot_image_format = vmdk or template'),
     # Vsettan-ONLY STOP
-    cfg.FloatOpt('task_poll_interval',
-                 default=0.5,
-                 help='The interval used for polling of remote tasks.'),
-    cfg.IntOpt('api_retry_count',
-               default=10,
-               help='The number of times we retry on failures, e.g., '
-                    'socket error, etc.'),
-    cfg.PortOpt('vnc_port',
-                default=5900,
-                help='VNC starting port'),
-    cfg.IntOpt('vnc_port_total',
-               default=10000,
-               help='Total number of VNC ports'),
-    cfg.BoolOpt('use_linked_clone',
-                default=True,
-                help='Whether to use linked clone'),
     # Vsettan-only hot resize begin
     cfg.BoolOpt('enable_vm_hot_resize',
                 default=True,
@@ -355,6 +357,7 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
                                          % self._cluster_name)
         # Check if the datastore cluster specified in the nova.conf is in the
         # vCenter. If it is not there, log a warning.
+        self._storage_pod = None
         storage_pod_name = CONF.vmware.datastore_cluster_name
         if storage_pod_name:
             self._storage_pod = ds_util.get_storage_pod_ref_by_name(self._session,
@@ -365,18 +368,19 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
         #Vsettan Resource Pool BEGIN
         self._virtapi = virtapi
         if self._resource_pool:
+            self._nodename = self._res_pool_path
             self._volumeops = volumeops.VMwareVolumeOps(self._session,
                                                    self._cluster_mor,
                                                    self._host_mor,
                                                    resource_pool=self._resource_pool)
             self._vmops = vmops.VMwareVMOps(self._session, self._virtapi,
-                                       _volumeops,
+                                       self._volumeops,
                                        self._cluster_mor, self._host_mor,
                                        datastore_regex=self._datastore_regex,
                                        res_pool=self._resource_pool,
                                        storage_pod=self._storage_pod,
-                                       nodename=self._res_pool_path)
-            self._vc_state = host.VCState(self._session, self._res_pool_path,
+                                       nodename=self._nodename)
+            self._vc_state = vcm_host.VCState(self._session, self._res_pool_path,
                                      self._cluster_mor, self._host_mor,
                                      resource_pool=self._resource_pool,
                                      datastore_regex=self._datastore_regex, #Vsettan-only
@@ -384,23 +388,23 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
             LOG.info(_("self._resource_pool is %s."), self._resource_pool)
         #Vsettan Resource Pool END
         else:
-            node = self._cluster_mor.value
-            name = self._cluster_name
-            nodename = self._create_nodename(node, name)
+            self._nodename = self._create_nodename(self._cluster_mor.value, 
+                                             self._cluster_name)
             self._volumeops = volumeops.VMwareVolumeOps(self._session,
                                         self._cluster_mor)
             self._vmops = vmops.VMwareVMOps(self._session, self._virtapi,
-                                       _volumeops,
+                                       self._volumeops,
                                        self._cluster_mor,
                                        # Vsettan-only begin
                                        storage_pod=self._storage_pod,
-                                       nodename=nodename,
+                                       nodename=self._nodename,
                                        # Vsettan-only end
                                        datastore_regex=self._datastore_regex)
-            self._vc_state = host.VCState(self._session, nodename,
-                                     self._cluster_mor],
+            self._vc_state = vcm_host.VCState(self._session, self._nodename,
+                                     self._cluster_mor,
                                      datastore_regex=self._datastore_regex,
                                      storage_pod=self._storage_pod) #Vsettan-only
+            LOG.info(_("self._cluster_name is %s."), self._cluster_name)
 
         LOG.info(_("self.get_host_stats is %s."), self._vc_state.get_host_stats())
         '''raise exception.NotFound("All clusters specified %s were not"
@@ -498,13 +502,8 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
         return self._vmops.list_instances()
 
     def list_instances(self):
-        """List VM instances from all nodes."""
-        instances = []
-        nodes = self.get_available_nodes()
-        for node in nodes:
-            vmops = self._get_vmops_for_compute_node(node)
-            instances.extend(vmops.list_instances())
-        return instances
+        """List VM instances from the single compute node."""
+        return self._vmops.list_instances()
 
     def migrate_disk_and_power_off(self, context, instance, dest,
                                    flavor, network_info,
@@ -853,7 +852,7 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
         disable_service = not enabled
         ctx = nova_context.get_admin_context()
         try:
-            service = objects.Service.get_by_compute_host(ctx, CONF.host)
+            service = nova_objects.Service.get_by_compute_host(ctx, CONF.host)
 
             if service.disabled != disable_service:
                 if not service.disabled or (
@@ -912,41 +911,55 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
 
     def _update_resources(self):
         #Vsettan Resource Pool BEGIN
+        import pdb;pdb.set_trace()
         if self._resource_pool:
+            self._nodename = self._res_pool_path
             self._volumeops = volumeops.VMwareVolumeOps(self._session,
                                                    self._cluster_mor,
                                                    self._host_mor,
                                                    resource_pool=self._resource_pool)
             self._vmops = vmops.VMwareVMOps(self._session, self._virtapi,
-                                       _volumeops,
+                                       self._volumeops,
                                        self._cluster_mor, self._host_mor,
                                        datastore_regex=self._datastore_regex,
                                        res_pool=self._resource_pool,
                                        storage_pod=self._storage_pod,
-                                       nodename=self._res_pool_path)
-            self._vc_state = host.VCState(self._session, self._res_pool_path,
+                                       nodename=self._nodename)
+            self._vc_state = vcm_host.VCState(self._session, self._res_pool_path,
                                      self._cluster_mor, self._host_mor,
                                      resource_pool=self._resource_pool,
                                      datastore_regex=self._datastore_regex, #Vsettan-only
                                      storage_pod=self._storage_pod) #Vsettan-only
+            LOG.info(_("self._resource_pool is %s."), self._resource_pool)
         #Vsettan Resource Pool END
         else:
-            name = self._cluster_mor['name'] # Vsettan-only 
-            nodename = self._create_nodename(node, name) # Vsettan-only
+            self._nodename = self._create_nodename(self._cluster_mor.value, 
+                                             self._cluster_name)
             self._volumeops = volumeops.VMwareVolumeOps(self._session,
                                         self._cluster_mor)
             self._vmops = vmops.VMwareVMOps(self._session, self._virtapi,
-                                       _volumeops,
+                                       self._volumeops,
                                        self._cluster_mor,
                                        # Vsettan-only begin
                                        storage_pod=self._storage_pod,
-                                       nodename=nodename,
+                                       nodename=self._nodename,
                                        # Vsettan-only end
                                        datastore_regex=self._datastore_regex)
-            self._vc_state = host.VCState(self._session, nodename,
-                                     self._cluster_mor],
+            self._vc_state = vcm_host.VCState(self._session, self._nodename,
+                                     self._cluster_mor,
                                      datastore_regex=self._datastore_regex,
                                      storage_pod=self._storage_pod) #Vsettan-only
+            LOG.info(_("self._cluster_name is %s."), self._cluster_name)
+
+        LOG.info(_("self.get_host_stats is %s."), self._vc_state.get_host_stats())
+        '''raise exception.NotFound("All clusters specified %s were not"
+                                           " found in the vCenter")'''
+
+    def _get_vcenter_uuid(self):
+        """Retrieves the vCenter UUID."""
+
+        about = self._session._call_method(nova_vim_util, 'get_about_info')
+        return about.instanceUuid
 
 
     def _create_nodename(self, mo_id, display_name):
@@ -1004,11 +1017,8 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
                 # The VMWare driver manages multiple hosts, so there are
                 # likely many different CPU models in use. As such it is
                 # impossible to provide any meaningful info on the CPU
-                # model of the "host", but at least, we can set arch to
-                # x86_64
-               'cpu_info': "{\"arch\": \"x86_64\"}", #Vsettan-only
-               ###'supported_instances': jsonutils.dumps(
-               ###   host_stats['supported_instances']),
+                # model of the "host"
+               'cpu_info': None,
                'supported_instances': host_stats['supported_instances'],
                'numa_topology': None,
                }
@@ -1022,65 +1032,32 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
         :returns: dictionary describing resources
 
         """
-        stats_dict = {}
-        vc_state = self._get_vc_state_for_compute_node(nodename)
-        if vc_state:
-            host_stats = vc_state.get_host_stats(refresh=True)
-
-            # Updating host information
-            stats_dict = self._get_available_resources(host_stats)
-
-        else:
-            LOG.info(_LI("Invalid cluster or resource pool"
-                         " name : %s"), nodename)
-
+        host_stats = self._vc_state.get_host_stats(refresh=True)
+        stats_dict = self._get_available_resources(host_stats)
         return stats_dict
 
     def get_available_nodes(self, refresh=False):
         """Returns nodenames of all nodes managed by the compute service.
 
-        This method is for multi compute-nodes support. If a driver supports
-        multi compute-nodes, this method returns a list of nodenames managed
-        by the service. Otherwise, this method should return
-        [hypervisor_hostname].
+        This driver supports only one compute node.
         """
-        #Vsettan Resource Pool BEGIN
-        node_list = []
-        if self._resource_pool:
-            node_list.append(self._res_pool_path)
-            return node_list
-        #Vsettan Resource Pool END
-        self.dict_mors = vm_util.get_all_cluster_refs_by_name(
-                                self._session,
-                                CONF.vmware.cluster_name)
-        self._update_resources()
-        for node in self.dict_mors.keys():
-            nodename = self._create_nodename(node,
-                                          self.dict_mors.get(node)['name'])
-            node_list.append(nodename)
-        LOG.debug("The available nodes are: %s", node_list)
-        return node_list
+        return [self._nodename]
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
         """Create VM instance."""
-        _vmops = self._get_vmops_for_compute_node(instance.node)
-        _vmops.spawn(context, instance, image_meta, injected_files,
-              admin_password, network_info, block_device_info)
+        self._vmops.spawn(context, instance, image_meta, injected_files,
+                          admin_password, network_info, block_device_info)
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       disk_bus=None, device_type=None, encryption=None):
         """Attach volume storage to VM instance."""
-        _volumeops = self._get_volumeops_for_compute_node(instance.node)
-        return _volumeops.attach_volume(connection_info,
-                                        instance)
+        return self._volumeops.attach_volume(connection_info, instance)
 
     def detach_volume(self, connection_info, instance, mountpoint,
                       encryption=None):
         """Detach volume storage to VM instance."""
-        _volumeops = self._get_volumeops_for_compute_node(instance.node)
-        return _volumeops.detach_volume(connection_info,
-                                        instance)
+        return self._volumeops.detach_volume(connection_info, instance)
 
     def get_volume_connector(self, instance):
         """Return volume connector information."""
@@ -1197,11 +1174,9 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
         """Return info about the VM instance."""
         return self._vmops.get_info(instance)
 
-    # Vsettan-only start init power state
     def get_all_power_state(self):
         """Return power state of all the VM instances."""
         return self._vmops.get_all_power_state()
-    # Vsettan-only stop init power state
 
     def get_diagnostics(self, instance):
         """Return data about VM diagnostics."""
@@ -1246,22 +1221,7 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
 
     def manage_image_cache(self, context, all_instances):
         """Manage the local cache of images."""
-
-        # Running instances per cluster
-        cluster_instances = {}
-        for instance in all_instances:
-            instances = cluster_instances.get(instance.node)
-            if instances:
-                instances.append(instance)
-            else:
-                instances = [instance]
-            cluster_instances[instance.node] = instances
-
-        # Invoke the image aging per cluster
-        for resource in self._resources.keys():
-            instances = cluster_instances.get(resource, [])
-            _vmops = self._get_vmops_for_compute_node(resource)
-            _vmops.manage_image_cache(context, instances)
+        self._vmops.manage_image_cache(context, all_instances)
 
     def instance_exists(self, instance):
         """Efficient override of base instance_exists method."""
@@ -1333,6 +1293,7 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
         return self._volumeops.get_disks_info(instance, volume_uuids)
     # Vsettan-only end
 
+    # add api interface driver
     def get_datacenters(self, context, detail=False):
         """ Get datacenters for vCenter server. """
         datacenters = ds_util.get_datacenters(self._session, detail=detail)

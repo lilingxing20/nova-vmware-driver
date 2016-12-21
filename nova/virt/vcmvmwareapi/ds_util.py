@@ -753,7 +753,7 @@ def get_datastore_clusters(session, properties_list=['name'], detail=False):
             LOG.warn(_LE("Failed to get datastore cluster child datastore,\
                           warning references %s."), excep)
         ds_cluster_list.append(ds_cluster) 
-
+    
     return ds_cluster_list
 
 

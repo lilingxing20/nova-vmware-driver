@@ -301,7 +301,7 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
         self._res_pool_path = CONF.vmware.resource_pool
         self._host = None
         self._res_pool_name = None
-        self._resource_pool = None
+        self._res_pool_mor = None
         if self._res_pool_path:
             host_or_cluster = self._res_pool_path.split(":")[0]
             self._res_pool_name = self._res_pool_path.split(":")[-1]
@@ -329,24 +329,24 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
         self._cluster_mor = None
         if self._res_pool_name:
             if self._host:
-                (self._resource_pool, self._host_mor) = vm_util.get_pool_refs_by_host(
+                (self._res_pool_mor, self._host_mor) = vm_util.get_pool_refs_by_host(
                                                                 self._session,
                                                                 self._host,
                                                                 self._res_pool_name)
-                if not self._resource_pool:
+                if not self._res_pool_mor:
                     raise exception.NotFound(_("Resource pool %(resourcepool)s was not"
                                                " found on host %(host)s")
-                                             % {"resourcepool": self._resource_pool,
+                                             % {"resourcepool": self._res_pool_mor,
                                                 "host": self._host})
             elif self._cluster_name:
-                (self._resource_pool, self._cluster_mor) = vm_util.get_pool_refs_by_cluster(
+                (self._res_pool_mor, self._cluster_mor) = vm_util.get_pool_refs_by_cluster(
                                                                    self._session,
                                                                    self._cluster_name,
                                                                    self._res_pool_name)
-                if not self._resource_pool:
+                if not self._res_pool_mor:
                     raise exception.NotFound(_("Resource pool %(resourcepool)s was not"
                                                " found on cluster %(cluster)s")
-                                             % {"resourcepool": self._resource_pool,
+                                             % {"resourcepool": self._res_pool_mor,
                                                 "cluster": self._cluster_name})
         else:
             self._cluster_mor = vm_util.get_cluster_ref_by_name(self._session,
@@ -367,25 +367,25 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
 
         #Vsettan Resource Pool BEGIN
         self._virtapi = virtapi
-        if self._resource_pool:
+        if self._res_pool_mor:
             self._nodename = self._res_pool_path
             self._volumeops = volumeops.VMwareVolumeOps(self._session,
                                                    self._cluster_mor,
                                                    self._host_mor,
-                                                   resource_pool=self._resource_pool)
+                                                   resource_pool=self._res_pool_mor)
             self._vmops = vmops.VMwareVMOps(self._session, self._virtapi,
                                        self._volumeops,
                                        self._cluster_mor, self._host_mor,
                                        datastore_regex=self._datastore_regex,
-                                       res_pool=self._resource_pool,
+                                       res_pool=self._res_pool_mor,
                                        storage_pod=self._storage_pod,
                                        nodename=self._nodename)
             self._vc_state = vcm_host.VCState(self._session, self._res_pool_path,
                                      self._cluster_mor, self._host_mor,
-                                     resource_pool=self._resource_pool,
+                                     resource_pool=self._res_pool_mor,
                                      datastore_regex=self._datastore_regex, #Vsettan-only
                                      storage_pod=self._storage_pod) #Vsettan-only
-            LOG.info(_("self._resource_pool is %s."), self._resource_pool)
+            LOG.info(_("Resource pool name is %s."), self._res_pool_name)
         #Vsettan Resource Pool END
         else:
             self._nodename = self._create_nodename(self._cluster_mor.value, 
@@ -404,7 +404,7 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
                                      self._cluster_mor,
                                      datastore_regex=self._datastore_regex,
                                      storage_pod=self._storage_pod) #Vsettan-only
-            LOG.info(_("self._cluster_name is %s."), self._cluster_name)
+            LOG.info(_("Cluster_name is %s."), self._cluster_name)
 
         LOG.info(_("self.get_host_stats is %s."), self._vc_state.get_host_stats())
         '''raise exception.NotFound("All clusters specified %s were not"
@@ -905,32 +905,30 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
 
     # Vsettan-only start
     def get_console_output(self, context, instance):
-        _vmops = self._get_vmops_for_compute_node(instance.node)
-        return _vmops.get_console_output(instance)
+        return self._vmops.get_console_output(instance)
     # Vsettan-only end
 
     def _update_resources(self):
         #Vsettan Resource Pool BEGIN
-        import pdb;pdb.set_trace()
-        if self._resource_pool:
+        if self._res_pool_mor:
             self._nodename = self._res_pool_path
             self._volumeops = volumeops.VMwareVolumeOps(self._session,
                                                    self._cluster_mor,
                                                    self._host_mor,
-                                                   resource_pool=self._resource_pool)
+                                                   resource_pool=self._res_pool_mor)
             self._vmops = vmops.VMwareVMOps(self._session, self._virtapi,
                                        self._volumeops,
                                        self._cluster_mor, self._host_mor,
                                        datastore_regex=self._datastore_regex,
-                                       res_pool=self._resource_pool,
+                                       res_pool=self._res_pool_mor,
                                        storage_pod=self._storage_pod,
                                        nodename=self._nodename)
             self._vc_state = vcm_host.VCState(self._session, self._res_pool_path,
                                      self._cluster_mor, self._host_mor,
-                                     resource_pool=self._resource_pool,
+                                     resource_pool=self._res_pool_mor,
                                      datastore_regex=self._datastore_regex, #Vsettan-only
                                      storage_pod=self._storage_pod) #Vsettan-only
-            LOG.info(_("self._resource_pool is %s."), self._resource_pool)
+            LOG.info(_("Resource pool name is %s."), self._res_pool_name)
         #Vsettan Resource Pool END
         else:
             self._nodename = self._create_nodename(self._cluster_mor.value, 
@@ -949,7 +947,7 @@ class VCMVMwareVCDriver(driver.ComputeDriver):
                                      self._cluster_mor,
                                      datastore_regex=self._datastore_regex,
                                      storage_pod=self._storage_pod) #Vsettan-only
-            LOG.info(_("self._cluster_name is %s."), self._cluster_name)
+            LOG.info(_("Cluster_name is %s."), self._cluster_name)
 
         LOG.info(_("self.get_host_stats is %s."), self._vc_state.get_host_stats())
         '''raise exception.NotFound("All clusters specified %s were not"

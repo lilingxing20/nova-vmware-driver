@@ -445,8 +445,6 @@ class VMwareVMOps(object):
     def _fetch_image_as_file(self, context, vi, image_ds_loc):
         """Download image as an individual file to host via HTTP PUT."""
         session = self._session
-        session_vim = session.vim
-        cookies = session_vim.client.options.transport.cookiejar
 
         LOG.debug("Downloading image file data %(image_id)s to "
                   "%(file_path)s on the data store "
@@ -781,6 +779,10 @@ class VMwareVMOps(object):
                 #Vsettan-only end
                 LOG.debug("Caching image", instance=vi.instance)
                 image_cache(vi, tmp_image_ds_loc)
+                #Vsettan-only start
+                if vi.ii.disk_type == "streamOptimized":
+                    self._update_image_size(vi)
+                #Vsettan-only end
                 LOG.debug("Cleaning up location %s", str(tmp_dir_loc),
                           instance=vi.instance)
                 self._delete_datastore_file(str(tmp_dir_loc), vi.dc_info.ref)

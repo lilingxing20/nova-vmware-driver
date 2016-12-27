@@ -1,5 +1,6 @@
 # Copyright (c) 2011 Citrix Systems, Inc.
 # Copyright 2011 OpenStack Foundation
+# Copyright 2016 Vsettan Corp.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -16,17 +17,17 @@
 """
 Exception classes specific for the VMware driver.
 """
+import six #Vsettan-only
 
-from nova import exception
+from oslo_log import log as logging
+from oslo_vmware import exceptions as vexc
+
+from nova import exception #Vsettan-only
 from nova.i18n import _
 
+LOG = logging.getLogger(__name__) #Vsettan-only
 
 #Vsettan-only begin
-import six
-from oslo_vmware import exceptions as vexc
-from oslo_log import log as logging
-LOG = logging.getLogger(__name__)
-
 ALREADY_EXISTS = 'AlreadyExists'
 CANNOT_DELETE_FILE = 'CannotDeleteFile'
 FILE_ALREADY_EXISTS = 'FileAlreadyExists'
@@ -45,15 +46,15 @@ NOT_AUTHENTICATED = 'NotAuthenticated'
 # - map back to NovaException?
 
 
-class NoRootDiskDefined(exception.NovaException):
+class NoRootDiskDefined(vexc.VMwareDriverException):
     msg_fmt = _("No root disk defined.")
 
 
-class PbmDefaultPolicyUnspecified(exception.Invalid):
+class PbmDefaultPolicyUnspecified(vexc.VMwareDriverConfigurationException):
     msg_fmt = _("Default PBM policy is required if PBM is enabled.")
 
 
-class PbmDefaultPolicyDoesNotExist(exception.NovaException):
+class PbmDefaultPolicyDoesNotExist(vexc.VMwareDriverConfigurationException):
     msg_fmt = _("The default PBM policy doesn't exist on the backend.")
 
 

@@ -41,7 +41,9 @@ def _get_ds_capacity_and_freespace(session, cluster=None,
 
 
 class VCState(object):
-    """Manages information about the vCenter cluster"""
+    """Manages information about the VC host this compute
+    node is running on.
+    """
     def __init__(self, session, host_name, cluster,
                  host=None, # Vsettan-only
                  resource_pool=None, # Vsettan-only
@@ -62,7 +64,7 @@ class VCState(object):
         self.update_status()
 
     def get_host_stats(self, refresh=False):
-        """Return the current state of the cluster. If 'refresh' is
+        """Return the current state of the host. If 'refresh' is
         True, run the update first.
         """
         if refresh or not self._stats:
@@ -72,24 +74,21 @@ class VCState(object):
     def update_status(self):
         """Update the current state of the cluster."""
         # Vsettan-only start
-        capacity, freespace = ds_util.\
-                get_ds_capacity_freespace_for_compute(self._session,
-                                                      self._cluster,
-                                                      self._host,
-                                                      self._datastore_regex,
-                                                      self._storage_pod)
+        capacity, freespace = ds_util.get_ds_capacity_freespace_for_compute(self._session,
+                                                                            self._cluster,
+                                                                            self._host,
+                                                                            self._datastore_regex,
+                                                                            self._storage_pod)
         # Vsettan-only end
 
         # Vsettan-only (prs-related) start
-        # Get cpu and memory info from ESXi host's metrics 
-        #  when using root resource pool
+        # Get cpu and memory info from ESXi host's metrics when using root resource pool
         if vm_util.is_root_resource_pool(self._session,
                                          resource_Pool=self._resource_pool):
             host_data = vm_util.get_stats_from_host(self._session, self._host)
             host_data["disk_total"] = capacity / units.Gi
             host_data["disk_available"] = freespace / units.Gi
-            host_data["disk_used"] = \
-                    host_data["disk_total"] - host_data["disk_available"]
+            host_data["disk_used"] = host_data["disk_total"] - host_data["disk_available"]
             host_data["hypervisor_hostname"] = self._host_name
             host_data["supported_instances"] = [
                      (arch.I686, constants.HYPERVISOR_IMAGE_TYPE, vm_mode.HVM),
@@ -99,10 +98,9 @@ class VCState(object):
         # Vsettan-only (prs-related) end
 
         # Get cpu, memory stats from the cluster
-        stats = vm_util.\
-                get_stats_from_cluster(self._session,
-                                       cluster=self._cluster,
-                                       resource_pool=self._resource_pool) # Vsettan-only
+        stats = vm_util.get_stats_from_cluster(self._session,
+                                               cluster=self._cluster,
+                                               resource_pool=self._resource_pool) # Vsettan-only
         about_info = self._session._call_method(vim_util, "get_about_info")
         data = {}
         data["vcpus"] = stats['vcpus']

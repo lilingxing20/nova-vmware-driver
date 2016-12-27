@@ -19,6 +19,7 @@ Utility functions for Image transfer and manipulation.
 
 import os
 import tarfile
+import tempfile
 
 from lxml import etree
 from oslo_config import cfg
@@ -47,8 +48,6 @@ LOG = logging.getLogger(__name__)
 IMAGE_API = image.API()
 
 QUEUE_BUFFER_SIZE = 10
-NFC_LEASE_UPDATE_PERIOD = 60  # update NFC lease every 60sec.
-CHUNK_SIZE = 64 * units.Ki  # default chunk size for image transfer
 
 LINKED_CLONE_PROPERTY = 'vmware_linked_clone'
 
@@ -164,6 +163,9 @@ class VMwareImage(object):
                 props['adapter_type'] = mapping.get(hw_scsi_model)
 
         props_map = {
+###            'vmware_ostype': 'os_type',
+###            'vmware_disktype': 'disk_type',
+###            'vmware_adaptertype': 'adapter_type',
             'os_distro': 'os_type',
             'hw_disk_type': 'disk_type',
             'hw_vif_model': 'vif_model'
